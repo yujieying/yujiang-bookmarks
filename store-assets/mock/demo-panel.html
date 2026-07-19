@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=420, initial-scale=1" />
+    <title>Mock — never touches Chrome bookmarks</title>
+    <link rel="stylesheet" href="../../sidepanel.css" />
+    <style>
+      html,
+      body {
+        width: 420px;
+        min-height: 820px;
+        margin: 0;
+        overflow: hidden;
+      }
+      .app {
+        min-height: 820px;
+        padding-bottom: 16px;
+      }
+      .mock-fav {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        color: #fff;
+        flex-shrink: 0;
+        border: 1px solid var(--line);
+      }
+      .result-list .mock-fav {
+        width: 24px;
+        height: 24px;
+        margin-top: 1px;
+      }
+      .domain-item .mock-fav {
+        width: 16px;
+        height: 16px;
+        font-size: 8px;
+      }
+      .folder-ico {
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+      }
+      dialog.mock-dialog {
+        border: 0;
+        border-radius: 16px;
+        padding: 0;
+        width: min(360px, 92%);
+        box-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
+      }
+      dialog.mock-dialog::backdrop {
+        background: rgba(15, 23, 42, 0.35);
+      }
+      .mock-dialog-body {
+        padding: 18px 18px 16px;
+      }
+      .mock-dialog h3 {
+        margin: 0 0 6px;
+        font-size: 1.05rem;
+      }
+      .mock-dialog .hint {
+        margin: 0 0 12px;
+        color: var(--ink-soft);
+        font-size: 0.82rem;
+      }
+      .mock-folder-list {
+        list-style: none;
+        margin: 0 0 14px;
+        padding: 0;
+        max-height: 280px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+      }
+      .mock-folder-list li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        font-size: 0.84rem;
+        font-weight: 500;
+      }
+      .mock-folder-list li.is-active {
+        background: var(--primary-soft);
+        color: var(--primary-deep);
+        font-weight: 700;
+      }
+      .mock-dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand">
+          <img class="brand-mark" src="../../icons/icon128.png" alt="" width="36" height="36" />
+          <div>
+            <h1>书签管理助手</h1>
+            <p class="tagline">搜得到 · 理得清 · 少踩坑</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <label class="lang-switch">
+            <select aria-label="语言"><option>中文</option></select>
+          </label>
+          <button type="button" class="icon-btn" title="刷新" aria-label="刷新">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.1A6 6 0 1 1 12 6c1.48 0 2.82.54 3.87 1.43L13 11h7V4l-2.35 2.35Z"
+              />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="stats">
+        <button type="button" class="stat is-link"><strong>128</strong><span>书签</span></button>
+        <button type="button" class="stat is-link"><strong>16</strong><span>文件夹</span></button>
+        <button type="button" class="stat is-link"><strong>42</strong><span>域名</span></button>
+        <button type="button" class="stat warn is-link"><strong id="stat-pending">6</strong><span>待处理</span></button>
+      </section>
+
+      <label class="search">
+        <span class="search-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20">
+            <path
+              fill="currentColor"
+              d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5Zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14Z"
+            />
+          </svg>
+        </span>
+        <input id="search-input" type="search" value="" placeholder="搜标题、网址或文件夹路径…" readonly />
+      </label>
+
+      <nav class="tabs" id="tabs">
+        <button type="button" class="tab" data-view="tree">目录</button>
+        <button type="button" class="tab" data-view="overview">概况</button>
+        <button type="button" class="tab" data-view="insights">整理建议</button>
+        <button type="button" class="tab" data-view="search">搜索</button>
+      </nav>
+
+      <main class="panels">
+        <!-- TREE -->
+        <section class="panel" id="panel-tree">
+          <p class="hint tree-hint">拖到条目上下可排序；拖到文件夹中间可移入；悬停显示重命名 / 删除图标。</p>
+          <div class="folder-tree">
+            <details class="tree-folder" open>
+              <summary class="tree-folder-summary">
+                <span class="tree-folder-icon" aria-hidden="true">
+                  <svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                </span>
+                <span class="tree-title">书签栏</span>
+                <span class="tree-count">0 链 · 4 夹</span>
+              </summary>
+
+              <details class="tree-folder" open>
+                <summary class="tree-folder-summary">
+                  <span class="tree-folder-icon" aria-hidden="true">
+                    <svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                  </span>
+                  <span class="tree-title">学习计划</span>
+                  <span class="tree-count">5 链 · 1 夹</span>
+                </summary>
+                <div class="tree-row">
+                  <span class="mock-fav" style="background:#2563eb">MD</span>
+                  <span class="tree-title">MDN Web Docs</span>
+                </div>
+                <div class="tree-row is-renaming">
+                  <span class="mock-fav" style="background:#111827">GH</span>
+                  <div class="tree-rename-edit">
+                    <input class="tree-rename-input" value="GitHub Docs — Demo" readonly />
+                    <button type="button" class="btn tiny primary">保存</button>
+                    <button type="button" class="btn tiny ghost">取消</button>
+                  </div>
+                </div>
+                <div class="tree-row">
+                  <span class="mock-fav" style="background:#0ea5e9">JS</span>
+                  <span class="tree-title">JavaScript Info</span>
+                </div>
+                <details class="tree-folder">
+                  <summary class="tree-folder-summary">
+                    <span class="tree-folder-icon" aria-hidden="true">
+                      <svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                    </span>
+                    <span class="tree-title">算法练习</span>
+                    <span class="tree-count">2 链 · 0 夹</span>
+                  </summary>
+                </details>
+              </details>
+
+              <details class="tree-folder" open>
+                <summary class="tree-folder-summary">
+                  <span class="tree-folder-icon" aria-hidden="true">
+                    <svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                  </span>
+                  <span class="tree-title">好用工具</span>
+                  <span class="tree-count">4 链 · 0 夹</span>
+                </summary>
+                <div class="tree-row">
+                  <span class="mock-fav" style="background:#22c55e">RE</span>
+                  <span class="tree-title">正则可视化（示例）</span>
+                </div>
+                <div class="tree-row">
+                  <span class="mock-fav" style="background:#a855f7">JS</span>
+                  <span class="tree-title">JSON 格式化（示例）</span>
+                </div>
+                <div class="tree-row">
+                  <span class="mock-fav" style="background:#f97316">DF</span>
+                  <span class="tree-title">代码对比（示例）</span>
+                </div>
+              </details>
+
+              <details class="tree-folder">
+                <summary class="tree-folder-summary">
+                  <span class="tree-folder-icon" aria-hidden="true">
+                    <svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                  </span>
+                  <span class="tree-title">设计灵感</span>
+                  <span class="tree-count">3 链 · 0 夹</span>
+                </summary>
+              </details>
+            </details>
+          </div>
+        </section>
+
+        <!-- OVERVIEW -->
+        <section class="panel" id="panel-overview">
+          <div class="card">
+            <h2>域名分布</h2>
+            <ul class="domain-list">
+              <li class="domain-row is-open">
+                <button type="button" class="domain-row-head">
+                  <span class="domain-chevron">▸</span>
+                  <span class="domain-name">developer.mozilla.org</span>
+                  <span class="bar"><i style="width:92%"></i></span>
+                  <span class="domain-count">12</span>
+                </button>
+                <ul class="domain-detail">
+                  <li class="domain-item">
+                    <span class="mock-fav" style="background:#2563eb">MD</span>
+                    <div class="domain-item-main">
+                      <button type="button" class="domain-item-title tree-title">HTML 元素参考</button>
+                      <button type="button" class="domain-item-url">https://developer.mozilla.org/docs/Web/HTML</button>
+                      <div class="domain-item-path">书签栏 / 学习计划</div>
+                    </div>
+                    <div class="domain-item-actions">
+                      <button type="button" class="btn tiny">跳至目录</button>
+                      <button type="button" class="btn tiny">移动</button>
+                      <button type="button" class="btn tiny">删除</button>
+                    </div>
+                  </li>
+                  <li class="domain-item">
+                    <span class="mock-fav" style="background:#2563eb">MD</span>
+                    <div class="domain-item-main">
+                      <button type="button" class="domain-item-title tree-title">CSS 选择器</button>
+                      <button type="button" class="domain-item-url">https://developer.mozilla.org/docs/Web/CSS</button>
+                      <div class="domain-item-path">书签栏 / 学习计划</div>
+                    </div>
+                    <div class="domain-item-actions">
+                      <button type="button" class="btn tiny">跳至目录</button>
+                      <button type="button" class="btn tiny">移动</button>
+                      <button type="button" class="btn tiny">删除</button>
+                    </div>
+                  </li>
+                </ul>
+              </li>
+              <li class="domain-row">
+                <button type="button" class="domain-row-head">
+                  <span class="domain-chevron">▸</span>
+                  <span class="domain-name">github.com</span>
+                  <span class="bar"><i style="width:78%"></i></span>
+                  <span class="domain-count">9</span>
+                </button>
+              </li>
+              <li class="domain-row">
+                <button type="button" class="domain-row-head">
+                  <span class="domain-chevron">▸</span>
+                  <span class="domain-name">stackoverflow.com</span>
+                  <span class="bar"><i style="width:64%"></i></span>
+                  <span class="domain-count">7</span>
+                </button>
+              </li>
+              <li class="domain-row">
+                <button type="button" class="domain-row-head">
+                  <span class="domain-chevron">▸</span>
+                  <span class="domain-name">example.com</span>
+                  <span class="bar"><i style="width:40%"></i></span>
+                  <span class="domain-count">4</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- INSIGHTS -->
+        <section class="panel" id="panel-insights">
+          <div class="insight-block">
+            <div class="insight-head">
+              <h2>重复网址</h2>
+              <button type="button" class="btn tiny">一键去重</button>
+            </div>
+            <div class="issue">
+              <div class="issue-main">
+                <div class="issue-title">重复 × 2</div>
+                <div class="issue-meta">https://example.com/docs/guide</div>
+                <div class="issue-meta">书签栏 / 好用工具</div>
+                <div class="issue-meta">书签栏 / 学习计划</div>
+              </div>
+              <div class="issue-actions">
+                <button type="button" class="btn tiny danger">删除多余</button>
+              </div>
+            </div>
+          </div>
+          <div class="insight-block">
+            <div class="insight-head"><h2>过小文件夹（≤2）</h2></div>
+            <div class="issue">
+              <div class="issue-main">
+                <div class="issue-title">草稿箱 · 1项</div>
+                <div class="issue-meta">书签栏 / 学习计划</div>
+              </div>
+              <div class="issue-actions">
+                <button type="button" class="btn tiny">合并到上级</button>
+              </div>
+            </div>
+            <div class="issue">
+              <div class="issue-main">
+                <div class="issue-title">临时 · 2项</div>
+                <div class="issue-meta">书签栏 / 好用工具</div>
+              </div>
+              <div class="issue-actions">
+                <button type="button" class="btn tiny">合并到上级</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- SEARCH -->
+        <section class="panel" id="panel-search">
+          <p class="meta" id="search-meta">找到 3 条</p>
+          <ul class="result-list">
+            <li>
+              <span class="mock-fav" style="background:#111827">GH</span>
+              <div class="result-main">
+                <button type="button" class="result-title is-link">GitHub Docs — Demo</button>
+                <button type="button" class="result-url is-link">https://docs.github.com/en</button>
+                <div class="result-path">书签栏 / 学习计划</div>
+              </div>
+              <div class="result-actions">
+                <button type="button" class="btn tiny">跳至目录</button>
+                <button type="button" class="btn tiny">移动</button>
+                <button type="button" class="btn tiny">删除</button>
+              </div>
+            </li>
+            <li>
+              <span class="mock-fav" style="background:#2563eb">MD</span>
+              <div class="result-main">
+                <button type="button" class="result-title is-link">MDN Web Docs</button>
+                <button type="button" class="result-url is-link">https://developer.mozilla.org/</button>
+                <div class="result-path">书签栏 / 学习计划</div>
+              </div>
+              <div class="result-actions">
+                <button type="button" class="btn tiny">跳至目录</button>
+                <button type="button" class="btn tiny">移动</button>
+                <button type="button" class="btn tiny">删除</button>
+              </div>
+            </li>
+            <li>
+              <span class="mock-fav" style="background:#22c55e">RE</span>
+              <div class="result-main">
+                <button type="button" class="result-title is-link">正则可视化（示例）</button>
+                <button type="button" class="result-url is-link">https://example.com/regex</button>
+                <div class="result-path">书签栏 / 好用工具</div>
+              </div>
+              <div class="result-actions">
+                <button type="button" class="btn tiny">跳至目录</button>
+                <button type="button" class="btn tiny">移动</button>
+                <button type="button" class="btn tiny">删除</button>
+              </div>
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="mock-dialog" id="move-dialog">
+      <div class="mock-dialog-body">
+        <h3>移动到文件夹</h3>
+        <p class="hint">GitHub Docs — Demo</p>
+        <ul class="mock-folder-list">
+          <li><svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>书签栏</li>
+          <li style="padding-left:22px"><svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>学习计划</li>
+          <li class="is-active" style="padding-left:22px"><svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>好用工具</li>
+          <li style="padding-left:22px"><svg class="folder-ico" viewBox="0 0 24 24"><path fill="#f59e0b" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>设计灵感</li>
+        </ul>
+        <div class="mock-dialog-actions">
+          <button type="button" class="btn">取消</button>
+          <button type="button" class="btn primary">移动</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script>
+      // Demo-only: static mock UI. Does NOT call chrome.bookmarks.
+      const params = new URLSearchParams(location.search);
+      const view = params.get("view") || "tree";
+      const q = params.get("q") || "";
+
+      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("is-active"));
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("is-active"));
+
+      const panel = document.getElementById("panel-" + view) || document.getElementById("panel-tree");
+      panel.classList.add("is-active");
+      const tab = document.querySelector(`.tab[data-view="${view}"]`);
+      if (tab) tab.classList.add("is-active");
+
+      if (view === "search") {
+        document.getElementById("search-input").value = q || "docs";
+      }
+      if (view === "insights") {
+        document.getElementById("stat-pending").textContent = "6";
+      }
+      if (view === "move") {
+        document.getElementById("panel-search").classList.add("is-active");
+        document.querySelector('.tab[data-view="search"]')?.classList.add("is-active");
+        document.getElementById("search-input").value = "github";
+        document.getElementById("move-dialog").showModal();
+      }
+
+      // Open domain chevron visual
+      document.querySelectorAll(".domain-row.is-open .domain-chevron").forEach((c) => {
+        c.style.transform = "rotate(90deg)";
+        c.style.display = "inline-block";
+      });
+    </script>
+  </body>
+</html>

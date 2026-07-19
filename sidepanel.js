@@ -31,6 +31,8 @@ let pendingMoveId = null;
 let openFolderIds = new Set();
 /** @type {string | null} */
 let dragSourceId = null;
+/** @type {{ targetId: string, place: 'before' | 'after' | 'into' | 'into-start' } | null} */
+let lastDropIntent = null;
 /** @type {string | null} */
 let renamingId = null;
 /** @type {string | null} */
@@ -413,6 +415,7 @@ function bookmarkRow(b) {
         <div class="result-path">${escapeHtml(b.pathLabel)}</div>
       </div>
       <div class="result-actions">
+        <button type="button" class="btn tiny" data-action="reveal" data-id="${b.id}">${escapeHtml(t("jumpToTree"))}</button>
         <button type="button" class="btn tiny" data-action="move" data-id="${b.id}" data-title="${escapeAttr(b.title || "")}">${escapeHtml(t("move"))}</button>
         <button type="button" class="btn tiny" data-action="delete" data-id="${b.id}" data-title="${escapeAttr(b.title || "")}" data-folder="0">${escapeHtml(t("delete"))}</button>
       </div>
@@ -745,6 +748,7 @@ function onDragEnd(e) {
   el.classList.remove("is-dragging");
   clearDropIndicators();
   dragSourceId = null;
+  lastDropIntent = null;
 }
 
 function clearDropIndicators() {
@@ -756,15 +760,21 @@ function clearDropIndicators() {
 /**
  * @param {HTMLElement} el
  * @param {number} clientY
- * @returns {'before' | 'after' | 'into'}
+ * @returns {'before' | 'after' | 'into' | 'into-start'}
  */
 function dropPlaceFor(el, clientY) {
   const rect = el.getBoundingClientRect();
   const ratio = (clientY - rect.top) / Math.max(rect.height, 1);
   const isFolder = el.tagName === "SUMMARY" || el.classList.contains("tree-folder-summary");
   if (isFolder) {
-    if (ratio < 0.28) return "before";
-    if (ratio > 0.72) return "after";
+    if (ratio < 0.22) return "before";
+    if (ratio > 0.78) {
+      // Expanded folder: bottom edge looks like "insert above first child",
+      // not "place after this folder among siblings".
+      const details = el.closest("details");
+      if (details?.open) return "into-start";
+      return "after";
+    }
     return "into";
   }
   return ratio < 0.5 ? "before" : "after";
@@ -779,7 +789,7 @@ function onDragOverItem(e) {
   if (!sourceId || !targetId || sourceId === targetId) return;
 
   const place = dropPlaceFor(el, e.clientY);
-  if (place === "into") {
+  if (place === "into" || place === "into-start") {
     if (!canDropIntoFolder(sourceId, targetId)) return;
   } else if (!canReorderBeside(sourceId, targetId)) {
     return;
@@ -790,8 +800,9 @@ function onDragOverItem(e) {
   if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 
   clearDropIndicators();
+  lastDropIntent = { targetId, place };
   if (place === "before") el.classList.add("is-drop-before");
-  else if (place === "after") el.classList.add("is-drop-after");
+  else if (place === "after" || place === "into-start") el.classList.add("is-drop-after");
   else el.classList.add("is-drop-target");
 }
 
@@ -812,32 +823,50 @@ async function onDropItem(e) {
   e.preventDefault();
   e.stopPropagation();
   const el = /** @type {HTMLElement} */ (e.currentTarget);
-  const targetId = el.getAttribute("data-node-id");
   const sourceId = e.dataTransfer?.getData("text/plain") || dragSourceId;
-  const place = dropPlaceFor(el, e.clientY);
+  // Prefer last dragover intent — drop clientY often drifts out of thin before/after zones.
+  const intent =
+    lastDropIntent ||
+    (() => {
+      const targetId = el.getAttribute("data-node-id");
+      if (!targetId) return null;
+      return { targetId, place: dropPlaceFor(el, e.clientY) };
+    })();
   clearDropIndicators();
   dragSourceId = null;
-  if (!sourceId || !targetId || sourceId === targetId) return;
+  lastDropIntent = null;
+  if (!sourceId || !intent?.targetId || sourceId === intent.targetId) return;
+
+  const { targetId, place } = intent;
 
   try {
-    if (place === "into") {
+    if (place === "into" || place === "into-start") {
       if (!canDropIntoFolder(sourceId, targetId)) {
         toast(t("toastCannotDrop"));
         return;
       }
-      await moveBookmark(sourceId, { parentId: targetId });
-      openFolderIds.add(targetId);
-    } else {
-      if (!canReorderBeside(sourceId, targetId)) {
-        toast(t("toastCannotDrop"));
-        return;
+      if (place === "into-start") {
+        await moveBookmark(sourceId, { parentId: targetId, index: 0 });
+      } else {
+        await moveBookmark(sourceId, { parentId: targetId });
       }
-      await moveBeside(sourceId, targetId, place);
+      openFolderIds.add(targetId);
+      await refresh({ silent: true });
+      toast(t("toastMoved"));
+      return;
+    }
+
+    if (!canReorderBeside(sourceId, targetId)) {
+      toast(t("toastCannotDrop"));
+      return;
+    }
+    const moved = await moveBeside(sourceId, targetId, place);
+    if (moved) {
       const target = data?.flat.find((i) => i.id === targetId);
       if (target?.parentId) openFolderIds.add(target.parentId);
+      await refresh({ silent: true });
     }
-    await refresh({ silent: true });
-    toast(place === "into" ? t("toastMoved") : t("toastReordered"));
+    toast(t("toastReordered"));
   } catch (err) {
     console.error(err);
     toast(t("toastMoveFail"));
@@ -848,17 +877,30 @@ async function onDropItem(e) {
  * @param {string} sourceId
  * @param {string} siblingId
  * @param {'before' | 'after'} place
+ * @returns {Promise<boolean>} false if already in place (no-op)
  */
 async function moveBeside(sourceId, siblingId, place) {
   const [sibling] = await chrome.bookmarks.get(siblingId);
+  const [source] = await chrome.bookmarks.get(sourceId);
   const parentId = sibling.parentId;
   if (!parentId) throw new Error("no parent");
   const children = await chrome.bookmarks.getChildren(parentId);
-  const withoutSource = children.filter((c) => c.id !== sourceId);
-  let index = withoutSource.findIndex((c) => c.id === siblingId);
-  if (index < 0) throw new Error("sibling missing");
-  if (place === "after") index += 1;
-  await moveBookmark(sourceId, { parentId, index });
+  const siblingIndex = children.findIndex((c) => c.id === siblingId);
+  if (siblingIndex < 0) throw new Error("sibling missing");
+
+  // Index in the current child list (source still included if same parent).
+  // Chrome expects this form; do not use a post-removal index.
+  const destIndex = place === "after" ? siblingIndex + 1 : siblingIndex;
+
+  if (source.parentId === parentId) {
+    const oldIndex = children.findIndex((c) => c.id === sourceId);
+    if (oldIndex < 0) throw new Error("source missing");
+    if (place === "before" && oldIndex === siblingIndex - 1) return false;
+    if (place === "after" && oldIndex === siblingIndex + 1) return false;
+  }
+
+  await moveBookmark(sourceId, { parentId, index: destIndex });
+  return true;
 }
 
 /** @param {string} sourceId @param {string} folderId */
@@ -1021,9 +1063,11 @@ function renderInsights() {
           .join("<br/>");
         return `
           <div class="issue">
-            <div class="issue-title">${escapeHtml(t("dupesCount", { n: g.items.length }))}</div>
-            <div class="issue-meta">${escapeHtml(g.url)}</div>
-            <div class="issue-meta">${titles}</div>
+            <div class="issue-main">
+              <div class="issue-title">${escapeHtml(t("dupesCount", { n: g.items.length }))}</div>
+              <div class="issue-meta">${escapeHtml(g.url)}</div>
+              <div class="issue-meta">${titles}</div>
+            </div>
             <div class="issue-actions">
               <button type="button" class="btn tiny danger" data-clean-dupe="${g.removeIds.join(",")}">${escapeHtml(t("removeExtra"))}</button>
             </div>
@@ -1055,8 +1099,10 @@ function renderInsights() {
       .map(
         (f) => `
         <div class="issue">
-          <div class="issue-title">${escapeHtml(f.title)}</div>
-          <div class="issue-meta">${escapeHtml(f.pathLabel)}</div>
+          <div class="issue-main">
+            <div class="issue-title">${escapeHtml(f.title)}</div>
+            <div class="issue-meta">${escapeHtml(f.pathLabel)}</div>
+          </div>
           <div class="issue-actions">
             <button type="button" class="btn tiny danger" data-del-folder="${f.id}">${escapeHtml(t("delete"))}</button>
           </div>
@@ -1086,8 +1132,10 @@ function renderInsights() {
         const parentId = f.parentId;
         return `
         <div class="issue">
-          <div class="issue-title">${escapeHtml(f.title)} · ${escapeHtml(t("items", { n: f.childCount }))}</div>
-          <div class="issue-meta">${escapeHtml(f.pathLabel)}</div>
+          <div class="issue-main">
+            <div class="issue-title">${escapeHtml(f.title)} · ${escapeHtml(t("items", { n: f.childCount }))}</div>
+            <div class="issue-meta">${escapeHtml(f.pathLabel)}</div>
+          </div>
           <div class="issue-actions">
             <button type="button" class="btn tiny" data-merge-into-parent="${f.id}" data-parent="${parentId}">${escapeHtml(t("mergeToParent"))}</button>
           </div>
@@ -1120,8 +1168,10 @@ function renderInsights() {
       .map(
         (p) => `
         <div class="issue">
-          <div class="issue-title">${escapeHtml(p.a.title)} ↔ ${escapeHtml(p.b.title)}</div>
-          <div class="issue-meta">${escapeHtml(t(p.reason))} · ${escapeHtml(p.a.pathLabel)} / ${escapeHtml(p.b.pathLabel)}</div>
+          <div class="issue-main">
+            <div class="issue-title">${escapeHtml(p.a.title)} ↔ ${escapeHtml(p.b.title)}</div>
+            <div class="issue-meta">${escapeHtml(t(p.reason))} · ${escapeHtml(p.a.pathLabel)} / ${escapeHtml(p.b.pathLabel)}</div>
+          </div>
           <div class="issue-actions">
             <button type="button" class="btn tiny" data-merge-a="${p.a.id}" data-merge-b="${p.b.id}" data-dir="a-into-b">${escapeHtml(t("mergeAIntoB", { a: p.a.title, b: p.b.title }))}</button>
             <button type="button" class="btn tiny" data-merge-a="${p.a.id}" data-merge-b="${p.b.id}" data-dir="b-into-a">${escapeHtml(t("mergeAIntoB", { a: p.b.title, b: p.a.title }))}</button>

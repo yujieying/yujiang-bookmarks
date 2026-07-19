@@ -21,5 +21,17 @@ icons/icon16|32|48|128.png（扩展内）
 promo-small-440x280.png
 promo-marquee-1400x560.png
 
-【截图】
-../../谷歌插件/store-ready/screenshot-*-1280x800.png
+【截图】（1280×800 讲解图 — 使用虚构 mock 数据，不读写真实书签）
+screenshot-1-1280x800.png — 目录树拖拽整理
+screenshot-2-1280x800.png — 域名概况
+screenshot-3-1280x800.png — 整理建议（去重/合并）
+screenshot-4-1280x800.png — 即时搜索
+screenshot-5-1280x800.png — 移动到文件夹
+同步副本：../../谷歌插件/store-ready/
+mock 面板源：store-assets/mock/demo-panel.html
+
+重新生成（推荐，安全 mock）：
+  python3 store-assets/render-mock-store-shots.py
+
+说明：脚本只截取本地 HTML，使用独立 headless Chrome，
+不会打开你的书签同步配置，也不会调用 chrome.bookmarks API。
