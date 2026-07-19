@@ -1,0 +1,11 @@
+.DS_Store
+*.zip
+icons/icon-master.png
+icons/icon512.png
+store-assets/raw/
+store-assets/icon-drafts/
+store-assets/export-icon.html
+store-assets/*.html
+node_modules/
+.env
+.env.*
