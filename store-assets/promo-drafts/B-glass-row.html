@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Promo B — Glass row</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: #0b1220; font-family: "Avenir Next", "Segoe UI", "PingFang SC", sans-serif; }
+      #tile {
+        width: 440px;
+        height: 280px;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        padding: 0 28px;
+        color: #fff;
+        background:
+          radial-gradient(ellipse 80% 70% at 85% 20%, rgba(125, 211, 252, 0.45), transparent 55%),
+          radial-gradient(ellipse 60% 50% at 0% 100%, rgba(49, 46, 129, 0.55), transparent 50%),
+          linear-gradient(135deg, #0ea5e9 0%, #2563eb 45%, #1e3a8a 100%);
+      }
+      #tile::before {
+        content: "";
+        position: absolute;
+        inset: -30% -20% -40% -30%;
+        background: repeating-radial-gradient(
+          circle at 95% -10%,
+          transparent 0, transparent 48px,
+          rgba(255,255,255,0.1) 48px, rgba(255,255,255,0.1) 51px,
+          transparent 51px, transparent 100px
+        );
+        pointer-events: none;
+      }
+      #tile::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        opacity: 0.28;
+        mix-blend-mode: soft-light;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+        background-size: 150px 150px;
+      }
+      .card {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        width: 100%;
+        padding: 22px 22px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        box-shadow:
+          0 16px 40px rgba(15, 23, 42, 0.22),
+          inset 0 1px 0 rgba(255, 255, 255, 0.35);
+        backdrop-filter: blur(10px);
+      }
+      .logo {
+        width: 68px;
+        height: 68px;
+        border-radius: 17px;
+        flex-shrink: 0;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+      }
+      .en {
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.15;
+      }
+      .zh {
+        margin-top: 5px;
+        font-size: 13px;
+        font-weight: 600;
+        opacity: 0.9;
+      }
+      .tag {
+        margin-top: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        opacity: 0.82;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="tile">
+      <div class="card">
+        <img class="logo" src="../../icons/icon128.png" alt="" />
+        <div>
+          <div class="en">Yujiang Bookmarks</div>
+          <div class="zh">鱼酱书签助手</div>
+          <div class="tag">Search · Deduplicate · Organize</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

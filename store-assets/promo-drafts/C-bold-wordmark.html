@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Promo C — Bold wordmark</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: #0b1220; font-family: "Avenir Next", "Segoe UI", "PingFang SC", sans-serif; }
+      #tile {
+        width: 440px;
+        height: 280px;
+        position: relative;
+        overflow: hidden;
+        color: #fff;
+        background:
+          radial-gradient(circle at 88% 18%, rgba(250, 204, 21, 0.22), transparent 42%),
+          radial-gradient(circle at 12% 85%, rgba(56, 189, 248, 0.35), transparent 45%),
+          linear-gradient(160deg, #1e3a8a 0%, #1d4ed8 38%, #2563eb 68%, #0ea5e9 100%);
+      }
+      #tile::before {
+        content: "";
+        position: absolute;
+        inset: -20%;
+        background: repeating-radial-gradient(
+          circle at 0% 100%,
+          transparent 0, transparent 64px,
+          rgba(255,255,255,0.11) 64px, rgba(255,255,255,0.11) 67px,
+          transparent 67px, transparent 130px
+        );
+        pointer-events: none;
+      }
+      #tile::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        opacity: 0.3;
+        mix-blend-mode: soft-light;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");
+        background-size: 140px 140px;
+      }
+      .top {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 26px 28px 0;
+      }
+      .logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.3);
+      }
+      .zh-top {
+        font-size: 14px;
+        font-weight: 700;
+        opacity: 0.95;
+      }
+      .word {
+        position: relative;
+        z-index: 1;
+        padding: 22px 28px 0;
+        font-size: 42px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        line-height: 1.05;
+        max-width: 360px;
+        text-shadow: 0 4px 24px rgba(15, 23, 42, 0.25);
+      }
+      .tag {
+        position: absolute;
+        z-index: 1;
+        left: 28px;
+        bottom: 28px;
+        display: inline-flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .pill {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 7px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        backdrop-filter: blur(6px);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="tile">
+      <div class="top">
+        <img class="logo" src="../../icons/icon128.png" alt="" />
+        <div class="zh-top">鱼酱书签助手</div>
+      </div>
+      <div class="word">Yujiang<br />Bookmarks</div>
+      <div class="tag">
+        <span class="pill">Search</span>
+        <span class="pill">Deduplicate</span>
+        <span class="pill">Organize</span>
+      </div>
+    </div>
+  </body>
+</html>
