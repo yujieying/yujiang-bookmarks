@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Yujiang Bookmarks - 鱼酱书签助手",
+  "name": "YJ书签管理小助手",
   "version": "1.3.3",
   "description": "Search, dedupe, and organize Chrome bookmarks in a side panel. 侧边栏搜索、查重、清理空夹与整理建议。",
   "permissions": ["bookmarks", "sidePanel", "favicon", "tabs", "storage"],
@@ -8,7 +8,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Yujiang Bookmarks",
+    "default_title": "YJ书签管理小助手",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

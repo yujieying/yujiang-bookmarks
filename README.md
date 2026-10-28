@@ -1,4 +1,4 @@
-# Yujiang Bookmarks / 鱼酱书签助手
+# YJ书签管理小助手
 
 Chrome 侧边栏书签整理扩展：搜索、查重、清理空夹、合并建议。支持 **中文 / English / Français**。
 
@@ -39,7 +39,7 @@ https://github.com/yujieying/yujiang-bookmarks
 
 **Last updated: 2026-07-19**
 
-Yujiang Bookmarks（鱼酱书签助手）是一款在本地运行的 Chrome 扩展。
+YJ书签管理小助手是一款在本地运行的 Chrome 扩展。
 
 ### What we collect / 我们收集什么
 
