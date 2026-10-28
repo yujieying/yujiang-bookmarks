@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yu书签管理助手 · 支付测试</title>
+    <link rel="stylesheet" href="payment-test.css" />
+  </head>
+  <body>
+    <main>
+      <p class="badge">仅限开发测试 · TEST ONLY</p>
+      <h1>测试购买</h1>
+      <p>验证 Pancake 支付与回调，不解锁会员、不改变现有书签功能、不上传书签。</p>
+      <p class="notice">测试金额 USD 1.00（可能另显示模拟税费）。请确认后台使用测试密钥，收银台显示 Test；只使用官方模拟卡，不输入真实银行卡。</p>
+      <p>本地服务：<code>http://127.0.0.1:8787</code><br />当前扩展 ID：<code id="extension-id"></code></p>
+      <label for="test-token">本地测试访问口令（PAYMENT_TEST_TOKEN，不是 Waffo 私钥）</label>
+      <input id="test-token" type="password" autocomplete="off" spellcheck="false" minlength="32" />
+      <p class="hint">口令仅留在当前页面内存，不保存到浏览器。订单查询凭据保存在本机，可在下方清除。</p>
+      <label class="confirmation"><input id="test-confirmed" type="checkbox" /> 我已确认使用 Test 环境，只用模拟卡测试。</label>
+      <div class="actions">
+        <button id="connect" type="button">连接本地测试服务</button>
+        <button id="buy" type="button" disabled>创建测试购买 / 重试</button>
+        <button id="reopen" type="button" disabled>重新打开收银台</button>
+        <button id="refresh-order" type="button" disabled>查询付款结果</button>
+      </div>
+      <p id="status" role="status" aria-live="polite">先启动独立测试后端，再连接。</p>
+      <p id="order-id" class="hint"></p>
+      <details>
+        <summary>官方测试卡与说明</summary>
+        <p>成功卡：<code>4576 7500 0000 0110</code><br />失败卡：<code>4576 7500 0000 0220</code><br />未来有效期（如 12/30），任意三位 CVC。</p>
+        <p>支付后回到此页查询。离开收银台不代表付款失败；只有经过服务端验证的通知才会更新状态。测试结果不代表正式会员资格。</p>
+        <a href="https://docs.waffo.ai/features/test-mode" target="_blank" rel="noopener">官方测试说明</a>
+      </details>
+      <button id="clear-order" type="button">清除本机订单记录 / 开始下一笔</button>
+      <p class="hint">仅清除本机查询凭据，不取消远端订单，不删除后端记录。已有付款仍须在 Pancake 后台确认。</p>
+    </main>
+    <script type="module" src="payment-test.mjs"></script>
+  </body>
+</html>

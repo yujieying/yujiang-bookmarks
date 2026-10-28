@@ -121,6 +121,26 @@ body {
   align-items: center;
 }
 
+.membership-badge {
+  align-self: flex-start;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.membership-badge.is-vip {
+  border-color: #f0c75e;
+  background: #fff8df;
+  color: #9a6500;
+}
+
 .brand-mark {
   width: 36px;
   height: 36px;
@@ -309,7 +329,7 @@ button.stat.is-link:focus-visible {
   background: transparent;
   color: var(--ink-soft);
   border-radius: 9px;
-  padding: 8px 2px;
+  padding: 8px 28px 8px 2px;
   cursor: pointer;
   font: inherit;
   font-size: 0.8rem;
@@ -393,8 +413,58 @@ button.stat.is-link:focus-visible {
 
 .domain-row {
   display: block !important;
+  position: relative;
   padding: 0 !important;
   border-top: 1px solid var(--line);
+}
+
+.domain-edit-toggle {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  z-index: 1;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  opacity: 0.72;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 20px;
+  text-align: center;
+}
+
+.domain-edit-toggle svg {
+  display: block;
+  margin: auto;
+  width: 15px;
+  height: 15px;
+}
+
+.domain-batch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 2px;
+}
+
+.domain-batch-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+}
+
+.overview-select {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--primary);
 }
 
 .domain-row:first-child {
@@ -406,14 +476,14 @@ button.stat.is-link:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 2px;
+  padding: 8px 28px 8px 2px;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 0;
 }
 
 .domain-row-head:hover {
@@ -455,7 +525,7 @@ button.stat.is-link:focus-visible {
   list-style: none;
   margin: 0 0 8px;
   padding: 4px 6px 6px;
-  border-radius: var(--radius-sm);
+  border-radius: 0 0 var(--radius-sm);
   background: var(--primary-soft);
 }
 
@@ -471,6 +541,7 @@ button.stat.is-link:focus-visible {
 
 .domain-item:first-child {
   border-top: 0 !important;
+  border-radius: 0 0 8px 8px;
 }
 
 .domain-item img {
@@ -535,6 +606,8 @@ button.stat.is-link:focus-visible {
 .domain-item-actions {
   display: flex;
   flex-direction: column;
+  align-self: center;
+  justify-content: center;
   gap: 4px;
   flex-shrink: 0;
 }
@@ -599,11 +672,21 @@ button.stat.is-link:focus-visible {
 
 .result-list li {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   padding: 10px;
   margin-bottom: 8px;
+}
+
+.result-list.is-edit-mode li {
+  grid-template-columns: 20px 28px minmax(0, 1fr) auto;
+}
+
+.result-list .search-select {
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
 }
 
 .result-list li.empty {
@@ -662,7 +745,8 @@ button.stat.is-link:focus-visible {
 .result-url {
   color: var(--ink-soft);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
   word-break: break-all;
   margin-top: 2px;
 }
@@ -948,7 +1032,7 @@ button.stat.is-link:focus-visible {
   margin-left: 4px;
   align-items: center;
   justify-content: flex-end;
-  width: 60px;
+  width: 88px;
   min-height: 28px;
   opacity: 0;
   visibility: hidden;
@@ -975,6 +1059,92 @@ button.stat.is-link:focus-visible {
   cursor: grab;
   user-select: none;
   transition: background var(--ease), outline-color var(--ease), box-shadow var(--ease);
+}
+
+.tree-select {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--primary);
+}
+
+.tree-batch-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 4px 2px 8px;
+}
+
+.tree-batch-toolbar[hidden] {
+  display: none !important;
+}
+
+.tree-batch-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.search-toolbar .meta {
+  flex: 1;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  opacity: 0.72;
+  cursor: pointer;
+}
+
+.mode-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.search-batch-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-batch-controls[hidden] {
+  display: none !important;
+}
+
+.search-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.search-select {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: var(--primary);
 }
 
 .tree-row.is-dragging,
@@ -1170,6 +1340,23 @@ dialog::backdrop {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
+}
+
+.membership-dialog-body {
+  min-width: 280px;
+}
+
+.membership-benefits {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.membership-benefits p {
+  margin: 4px 0;
 }
 
 .move-folder-list {

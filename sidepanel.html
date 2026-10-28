@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title data-i18n="appName">YJ书签管理小助手</title>
+    <title data-i18n="appName">Yu书签管理助手</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -22,6 +22,7 @@
             <p class="tagline" data-i18n="tagline">搜得到 · 理得清 · 少踩坑</p>
           </div>
         </div>
+        <button type="button" class="membership-badge" id="membership-badge" aria-label="查看会员权益">普通用户</button>
         <div class="top-actions">
           <label class="lang-switch">
             <select id="lang-select" data-i18n-title="langLabel" title="语言" aria-label="语言">
@@ -93,6 +94,11 @@
       <main class="panels">
         <section id="panel-tree" class="panel is-active" role="tabpanel">
           <p class="hint tree-hint" data-i18n="treeHint">拖到条目上下可排序；拖到文件夹中间可移入；悬停显示重命名 / 删除图标。</p>
+          <div class="tree-batch-toolbar" hidden>
+            <label><input type="checkbox" id="tree-select-all" /> <span>全选书签</span></label>
+            <button type="button" class="btn tiny" id="tree-batch-move" disabled>移动</button>
+            <button type="button" class="btn tiny danger" id="tree-batch-delete" disabled>删除</button>
+          </div>
           <div id="folder-tree" class="folder-tree"></div>
         </section>
 
@@ -135,10 +141,20 @@
         </section>
 
         <section id="panel-search" class="panel" role="tabpanel">
-          <div id="search-meta" class="meta"></div>
+          <div class="search-toolbar">
+            <div id="search-meta" class="meta"></div>
+            <button type="button" class="mode-toggle" id="search-mode-toggle" title="编辑模式" aria-label="编辑模式"></button>
+            <div class="search-batch-controls" id="search-batch-controls" hidden>
+              <label class="search-select-all"><input type="checkbox" id="search-select-all" /> <span>全选</span></label>
+              <button type="button" class="btn tiny" id="search-batch-move">移动</button>
+              <button type="button" class="btn tiny danger" id="search-batch-delete">删除</button>
+            </div>
+          </div>
           <ul class="result-list" id="search-results"></ul>
         </section>
       </main>
+
+      <p class="hint"><a href="payment-test.html" target="_blank" rel="noopener">开发测试 / Payment test（不影响书签功能）</a></p>
 
       <div id="toast" class="toast" hidden></div>
 
@@ -168,6 +184,21 @@
           <div class="dialog-actions">
             <button type="submit" value="cancel" class="btn ghost" data-i18n="cancel">取消</button>
             <button type="submit" value="ok" class="btn primary" data-i18n="move">移动</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="membership-dialog">
+        <form method="dialog" class="dialog-body membership-dialog-body">
+          <h3 id="membership-title">普通用户</h3>
+          <p id="membership-summary"></p>
+          <div class="membership-benefits">
+            <p><strong>普通用户</strong>：批处理操作免费 50 次。</p>
+            <p><strong>VIP 用户</strong>：批处理不限次数。</p>
+          </div>
+          <div class="dialog-actions">
+            <button type="submit" value="cancel" class="btn ghost">关闭</button>
+            <button type="button" class="btn primary" id="membership-upgrade">升级 VIP</button>
           </div>
         </form>
       </dialog>

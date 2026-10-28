@@ -28,6 +28,18 @@ let report = null;
 /** @type {string | null} */
 let pendingMoveId = null;
 /** @type {Set<string>} */
+let selectedSearchIds = new Set();
+let searchEditMode = false;
+const FREE_BATCH_LIMIT = 50;
+const MEMBERSHIP_STORAGE_KEY = "yjMembershipState";
+const VIP_UPGRADE_URL = chrome.runtime.getURL("payment-test.html");
+let membershipState = { batchUsed: 0, vip: false };
+let pendingBatchMove = false;
+/** @type {Set<string>} */
+let pendingMoveIds = new Set();
+/** @type {Set<string>} */
+let selectedTreeIds = new Set();
+/** @type {Set<string>} */
 let openFolderIds = new Set();
 /** @type {string | null} */
 let dragSourceId = null;
@@ -39,6 +51,10 @@ let renamingId = null;
 let renamingOriginalTitle = null;
 /** @type {Set<string>} */
 let expandedDomains = new Set();
+/** @type {Set<string>} */
+let domainEditModes = new Set();
+/** @type {Set<string>} */
+let overviewSelectedIds = new Set();
 
 const els = {
   statBookmarks: document.getElementById("stat-bookmarks"),
@@ -53,6 +69,14 @@ const els = {
   searchInput: /** @type {HTMLInputElement} */ (document.getElementById("search-input")),
   searchMeta: document.getElementById("search-meta"),
   searchResults: document.getElementById("search-results"),
+  searchModeToggle: /** @type {HTMLButtonElement} */ (document.getElementById("search-mode-toggle")),
+  searchBatchControls: document.getElementById("search-batch-controls"),
+  searchSelectAll: /** @type {HTMLInputElement} */ (document.getElementById("search-select-all")),
+  searchBatchMove: /** @type {HTMLButtonElement} */ (document.getElementById("search-batch-move")),
+  searchBatchDelete: /** @type {HTMLButtonElement} */ (document.getElementById("search-batch-delete")),
+  treeSelectAll: /** @type {HTMLInputElement} */ (document.getElementById("tree-select-all")),
+  treeBatchMove: /** @type {HTMLButtonElement} */ (document.getElementById("tree-batch-move")),
+  treeBatchDelete: /** @type {HTMLButtonElement} */ (document.getElementById("tree-batch-delete")),
   domainList: document.getElementById("domain-list"),
   largeList: document.getElementById("large-list"),
   folderTree: document.getElementById("folder-tree"),
@@ -73,6 +97,11 @@ const els = {
   moveFolderList: /** @type {HTMLElement} */ (document.getElementById("move-folder-list")),
   moveTargetLabel: document.getElementById("move-target-label"),
   langSelect: /** @type {HTMLSelectElement} */ (document.getElementById("lang-select")),
+  membershipBadge: document.getElementById("membership-badge"),
+  membershipDialog: /** @type {HTMLDialogElement} */ (document.getElementById("membership-dialog")),
+  membershipTitle: document.getElementById("membership-title"),
+  membershipSummary: document.getElementById("membership-summary"),
+  membershipUpgrade: /** @type {HTMLButtonElement} */ (document.getElementById("membership-upgrade")),
 };
 
 init();
@@ -84,11 +113,53 @@ async function init() {
   els.langSelect.value = getLang();
   bindTabs();
   bindGlobal();
+  await loadMembershipState();
   await refresh();
   chrome.bookmarks.onCreated.addListener(softRefresh);
   chrome.bookmarks.onRemoved.addListener(softRefresh);
   chrome.bookmarks.onChanged.addListener(softRefresh);
   chrome.bookmarks.onMoved.addListener(softRefresh);
+}
+
+async function loadMembershipState() {
+  const saved = await chrome.storage.local.get(MEMBERSHIP_STORAGE_KEY);
+  const value = saved[MEMBERSHIP_STORAGE_KEY];
+  if (value && typeof value === "object") {
+    membershipState = {
+      batchUsed: Number.isFinite(value.batchUsed) ? Math.max(0, value.batchUsed) : 0,
+      vip: value.vip === true,
+    };
+  }
+  renderMembershipBadge();
+}
+
+function renderMembershipBadge() {
+  els.membershipBadge.textContent = membershipState.vip ? "VIP 用户" : "普通用户";
+  els.membershipBadge.classList.toggle("is-vip", membershipState.vip);
+}
+
+function openMembershipDialog() {
+  els.membershipTitle.textContent = membershipState.vip ? "VIP 用户" : "普通用户";
+  els.membershipSummary.textContent = membershipState.vip
+    ? "您已解锁批处理不限次数。"
+    : `批处理已使用 ${membershipState.batchUsed}/${FREE_BATCH_LIMIT} 次，剩余 ${Math.max(0, FREE_BATCH_LIMIT - membershipState.batchUsed)} 次。`;
+  els.membershipUpgrade.hidden = membershipState.vip;
+  els.membershipUpgrade.disabled = false;
+  els.membershipUpgrade.textContent = "立即升级";
+  if (typeof els.membershipDialog.showModal === "function") els.membershipDialog.showModal();
+}
+
+function ensureBatchAccess() {
+  if (membershipState.vip || membershipState.batchUsed < FREE_BATCH_LIMIT) return true;
+  openMembershipDialog();
+  return false;
+}
+
+async function recordBatchOperation() {
+  if (membershipState.vip) return;
+  membershipState.batchUsed += 1;
+  await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
+  renderMembershipBadge();
 }
 
 let refreshTimer = 0;
@@ -161,6 +232,12 @@ function bindGlobal() {
     await refresh({ silent: true });
   });
 
+  els.membershipBadge.addEventListener("click", openMembershipDialog);
+  els.membershipUpgrade.addEventListener("click", () => {
+    chrome.tabs.create({ url: VIP_UPGRADE_URL });
+    els.membershipDialog.close();
+  });
+
   els.btnRefresh.addEventListener("click", () => refresh());
 
   document.querySelectorAll(".stat.is-link[data-tab]").forEach((card) => {
@@ -202,18 +279,96 @@ function bindGlobal() {
   });
 
   els.moveDialog.addEventListener("close", async () => {
-    if (els.moveDialog.returnValue !== "ok" || !pendingMoveId) {
+    if (els.moveDialog.returnValue !== "ok" || (!pendingMoveId && !pendingMoveIds.size)) {
       pendingMoveId = null;
+      pendingMoveIds.clear();
+      pendingBatchMove = false;
       return;
     }
     const parentId = els.moveSelect.value;
     const id = pendingMoveId;
+    const ids = pendingMoveIds.size ? [...pendingMoveIds] : [id];
+    const isBatchMove = pendingBatchMove;
     pendingMoveId = null;
+    pendingMoveIds.clear();
+    pendingBatchMove = false;
     if (!parentId) return;
-    await moveBookmark(id, { parentId });
+    for (const moveId of ids) await moveBookmark(moveId, { parentId });
+    if (isBatchMove) await recordBatchOperation();
+    selectedSearchIds.clear();
+    selectedTreeIds.clear();
+    overviewSelectedIds.clear();
     await refresh({ silent: true });
     toast(t("toastMoved"));
   });
+
+  els.searchSelectAll.addEventListener("change", () => {
+    els.searchResults.querySelectorAll("input[data-search-select]").forEach((input) => {
+      input.checked = els.searchSelectAll.checked;
+      if (input.checked) selectedSearchIds.add(input.value);
+      else selectedSearchIds.delete(input.value);
+    });
+    updateSearchBatchControls();
+  });
+  els.searchModeToggle.addEventListener("click", () => {
+    searchEditMode = !searchEditMode;
+    if (!searchEditMode) {
+      selectedSearchIds.clear();
+    }
+    const q = els.searchInput.value.trim();
+    if (q) renderSearch(q);
+    else updateSearchBatchControls();
+  });
+  els.searchBatchMove.addEventListener("click", () => {
+    if (!selectedSearchIds.size) {
+      toast("请先勾选要移动的书签");
+      return;
+    }
+    if (!ensureBatchAccess()) return;
+    pendingBatchMove = true;
+    openMoveDialog([...selectedSearchIds], `${selectedSearchIds.size} 个书签`);
+  });
+  els.searchBatchDelete.addEventListener("click", async () => {
+    const ids = [...selectedSearchIds];
+    if (!ids.length) {
+      toast("请先勾选要删除的书签");
+      return;
+    }
+    if (!ensureBatchAccess()) return;
+    if (!(await confirmAction("删除选中书签", `确定删除选中的 ${ids.length} 个书签吗？`))) return;
+    await removeMany(ids);
+    await recordBatchOperation();
+    selectedSearchIds.clear();
+    await refresh({ silent: true });
+    toast(t("toastDeleted"));
+  });
+  els.treeSelectAll.addEventListener("change", () => {
+    els.folderTree.querySelectorAll("input[data-tree-select]").forEach((input) => {
+      input.checked = els.treeSelectAll.checked;
+      if (input.checked) selectedTreeIds.add(input.value);
+      else selectedTreeIds.delete(input.value);
+    });
+    updateTreeBatchControls();
+  });
+  els.treeBatchMove.addEventListener("click", () => {
+    if (!selectedTreeIds.size) return toast("请先勾选要移动的书签");
+    if (!ensureBatchAccess()) return;
+    pendingBatchMove = true;
+    openMoveDialog([...selectedTreeIds], `${selectedTreeIds.size} 个书签`);
+  });
+  els.treeBatchDelete.addEventListener("click", async () => {
+    const ids = [...selectedTreeIds];
+    if (!ids.length) return toast("请先勾选要删除的书签");
+    if (!ensureBatchAccess()) return;
+    if (!(await confirmAction("删除选中书签", `确定删除选中的 ${ids.length} 个书签吗？`))) return;
+    await removeMany(ids);
+    await recordBatchOperation();
+    selectedTreeIds.clear();
+    await refresh({ silent: true });
+    toast(t("toastDeleted"));
+  });
+
+  updateSearchBatchControls();
 
 }
 
@@ -242,6 +397,7 @@ function renderOverview() {
         .map((d) => {
           const open = expandedDomains.has(d.domain);
           const items = open ? bookmarksForDomain(d.domain) : [];
+          const allSelected = items.length > 0 && items.every((item) => overviewSelectedIds.has(item.id));
           return `
       <li class="domain-row${open ? " is-open" : ""}">
         <button type="button" class="domain-row-head" data-toggle-domain="${escapeAttr(d.domain)}">
@@ -250,15 +406,18 @@ function renderOverview() {
           <span class="bar"><i style="width:${Math.round((d.count / max) * 100)}%"></i></span>
           <span class="domain-count">${d.count}</span>
         </button>
+        <button type="button" class="domain-edit-toggle" data-domain-edit="${escapeAttr(d.domain)}" title="${domainEditModes.has(d.domain) ? "查看模式" : "编辑模式"}">${domainEditModes.has(d.domain) ? iconEyeSvg() : iconEditOutlineSvg()}</button>
         ${
           open
             ? `<ul class="domain-detail">
+            ${domainEditModes.has(d.domain) ? `<li class="domain-batch-toolbar"><label><input type="checkbox" data-domain-select-all="${escapeAttr(d.domain)}" ${allSelected ? "checked" : ""} /> 全选</label><button type="button" class="btn tiny" data-domain-batch-move="${escapeAttr(d.domain)}" disabled>移动</button><button type="button" class="btn tiny danger" data-domain-batch-delete="${escapeAttr(d.domain)}" disabled>删除</button></li>` : ""}
             ${
               items.length
                 ? items
                     .map(
                       (b) => `
               <li class="domain-item" data-node-id="${b.id}">
+                ${domainEditModes.has(d.domain) ? `<input type="checkbox" class="overview-select" data-domain-select="${escapeAttr(d.domain)}" value="${escapeAttr(b.id)}" ${overviewSelectedIds.has(b.id) ? "checked" : ""} />` : ""}
                 <img src="${faviconUrl(b.url || "")}" alt="" width="16" height="16" />
                 <div class="domain-item-main">
                   <button type="button" class="domain-item-title tree-title" data-action="open" data-id="${b.id}" data-url="${escapeAttr(b.url || "")}">${escapeHtml(displayTitle(b.title, b.url))}</button>
@@ -294,6 +453,56 @@ function renderOverview() {
       if (expandedDomains.has(domain)) expandedDomains.delete(domain);
       else expandedDomains.add(domain);
       renderOverview();
+    });
+  });
+
+  els.domainList.querySelectorAll("[data-domain-edit]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const domain = btn.getAttribute("data-domain-edit");
+      if (!domain) return;
+      if (domainEditModes.has(domain)) domainEditModes.delete(domain);
+      else domainEditModes.add(domain);
+      overviewSelectedIds.clear();
+      renderOverview();
+    });
+  });
+  els.domainList.querySelectorAll("[data-domain-select-all]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const domain = input.getAttribute("data-domain-select-all");
+      const ids = bookmarksForDomain(domain).map((b) => b.id);
+      ids.forEach((id) => input.checked ? overviewSelectedIds.add(id) : overviewSelectedIds.delete(id));
+      renderOverview();
+    });
+  });
+  els.domainList.querySelectorAll("[data-domain-select]").forEach((input) => {
+    input.addEventListener("change", (e) => {
+      e.stopPropagation();
+      if (input.checked) overviewSelectedIds.add(input.value);
+      else overviewSelectedIds.delete(input.value);
+      renderOverview();
+    });
+  });
+  els.domainList.querySelectorAll("[data-domain-batch-move]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!overviewSelectedIds.size) return toast("请先勾选书签");
+      if (!ensureBatchAccess()) return;
+      pendingBatchMove = true;
+      openMoveDialog([...overviewSelectedIds], `${overviewSelectedIds.size} 个书签`);
+    });
+  });
+  els.domainList.querySelectorAll("[data-domain-batch-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const ids = [...overviewSelectedIds];
+      if (!ids.length) return toast("请先勾选书签");
+      if (!ensureBatchAccess()) return;
+      if (!(await confirmAction("删除选中书签", `确定删除选中的 ${ids.length} 个书签吗？`))) return;
+      await removeMany(ids);
+      await recordBatchOperation();
+      overviewSelectedIds.clear();
+      await refresh({ silent: true });
+      toast(t("toastDeleted"));
     });
   });
 
@@ -384,6 +593,8 @@ async function revealInTree(id) {
 function renderSearch(query) {
   if (!data) return;
   const results = searchBookmarks(query, data.bookmarks);
+  const visibleIds = new Set(results.slice(0, 80).map((b) => b.id));
+  selectedSearchIds = new Set([...selectedSearchIds].filter((id) => visibleIds.has(id)));
   els.searchMeta.textContent = t("searchFound", { n: results.length });
   els.searchResults.innerHTML = results.length
     ? results
@@ -395,6 +606,30 @@ function renderSearch(query) {
   els.searchResults.querySelectorAll("[data-action]").forEach((btn) => {
     btn.addEventListener("click", () => onItemAction(btn));
   });
+  els.searchResults.querySelectorAll("input[data-search-select]").forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) selectedSearchIds.add(input.value);
+      else selectedSearchIds.delete(input.value);
+      updateSearchBatchControls();
+    });
+  });
+  els.searchBatchControls.hidden = !searchEditMode;
+  els.searchModeToggle.innerHTML = searchEditMode ? iconEyeSvg() : iconEditOutlineSvg();
+  els.searchModeToggle.title = searchEditMode ? "查看模式" : "编辑模式";
+  els.searchModeToggle.setAttribute("aria-label", els.searchModeToggle.title);
+  updateSearchBatchControls();
+}
+
+function updateSearchBatchControls() {
+  const count = selectedSearchIds.size;
+  els.searchBatchControls.hidden = !searchEditMode;
+  els.searchResults.classList.toggle("is-edit-mode", searchEditMode);
+  els.searchModeToggle.innerHTML = searchEditMode ? iconEyeSvg() : iconEditOutlineSvg();
+  els.searchModeToggle.title = searchEditMode ? "查看模式" : "编辑模式";
+  els.searchModeToggle.setAttribute("aria-label", els.searchModeToggle.title);
+  const boxes = [...els.searchResults.querySelectorAll("input[data-search-select]")];
+  els.searchSelectAll.checked = boxes.length > 0 && boxes.every((box) => box.checked);
+  els.searchSelectAll.indeterminate = count > 0 && !els.searchSelectAll.checked;
 }
 
 function bookmarkRow(b) {
@@ -404,6 +639,7 @@ function bookmarkRow(b) {
   const openAttrs = `data-action="open" data-id="${b.id}" data-url="${escapeAttr(b.url || "")}"`;
   return `
     <li>
+      ${searchEditMode ? `<input type="checkbox" class="search-select" data-search-select value="${escapeAttr(b.id)}" ${selectedSearchIds.has(b.id) ? "checked" : ""} aria-label="选择此书签" />` : ""}
       ${icon ? `<img src="${icon}" alt="" width="24" height="24" />` : `<span></span>`}
       <div class="result-main">
         <button type="button" class="result-title is-link" ${openAttrs}>${title}</button>
@@ -613,14 +849,16 @@ async function commitInlineRename(save, inputEl) {
   }
 }
 
-function openMoveDialog(id, title) {
+function openMoveDialog(idOrIds, title) {
   if (!data) return;
-  pendingMoveId = id;
+  const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+  pendingMoveIds = new Set(ids);
+  pendingMoveId = ids.length === 1 ? ids[0] : null;
   els.moveTargetLabel.textContent = title;
 
   // Exclude self and descendants when moving a folder.
-  const blocked = new Set([id]);
-  const queue = [id];
+  const blocked = new Set(ids);
+  const queue = [...ids];
   while (queue.length) {
     const cur = queue.shift();
     for (const child of data.flat.filter((i) => i.parentId === cur && i.isFolder)) {
@@ -675,6 +913,8 @@ function openMoveDialog(id, title) {
 
 function renderTree({ preserveOpenFromDom = true } = {}) {
   if (!data) return;
+  const bookmarkIds = new Set(data.bookmarks.map((bookmark) => bookmark.id));
+  selectedTreeIds = new Set([...selectedTreeIds].filter((id) => bookmarkIds.has(id)));
   if (preserveOpenFromDom) rememberOpenFolders();
   const roots = data.tree[0]?.children || [];
   els.folderTree.innerHTML = roots.map((n) => renderFolderNode(n)).join("");
@@ -700,6 +940,15 @@ function bindTreeInteractions() {
       onItemAction(btn);
     });
   });
+  els.folderTree.querySelectorAll("input[data-tree-select]").forEach((input) => {
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("change", () => {
+      if (input.checked) selectedTreeIds.add(input.value);
+      else selectedTreeIds.delete(input.value);
+      updateTreeBatchControls();
+    });
+  });
+  updateTreeBatchControls();
 
   els.folderTree.querySelectorAll("[data-node-id]").forEach((el) => {
     el.addEventListener("dragstart", onDragStart);
@@ -956,6 +1205,7 @@ function renderFolderNode(node, depth = 0) {
         data-node-id="${node.id}"
         title="${escapeAttr(t("dragToMove"))}"
       >
+        <input type="checkbox" class="tree-select" data-tree-select value="${escapeAttr(node.id)}" ${selectedTreeIds.has(node.id) ? "checked" : ""} aria-label="选择此书签" />
         <img class="tree-fav" src="${faviconUrl(node.url)}" alt="" width="22" height="22" />
         <span
           class="tree-title"
@@ -992,8 +1242,29 @@ function renderFolderNode(node, depth = 0) {
     </details>`;
 }
 
+function updateTreeBatchControls() {
+  const count = selectedTreeIds.size;
+  els.treeBatchMove.disabled = count === 0;
+  els.treeBatchDelete.disabled = count === 0;
+  const boxes = [...els.folderTree.querySelectorAll("input[data-tree-select]")];
+  els.treeSelectAll.checked = boxes.length > 0 && boxes.every((box) => box.checked);
+  els.treeSelectAll.indeterminate = count > 0 && !els.treeSelectAll.checked;
+}
+
 function iconRenameSvg() {
   return `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>`;
+}
+
+function iconEyeSvg() {
+  return `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 5C6.5 5 2.1 8.4 1 12c1.1 3.6 5.5 7 11 7s9.9-3.4 11-7c-1.1-3.6-5.5-7-11-7zm0 11.5A4.5 4.5 0 1 1 12 7a4.5 4.5 0 0 1 0 9.5zm0-2A2.5 2.5 0 1 0 12 9a2.5 2.5 0 0 0 0 5.5z"/></svg>`;
+}
+
+function iconEditOutlineSvg() {
+  return `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 4h9M5 4v16h14v-8M5 20h14M16.5 4.5a2.12 2.12 0 0 1 3 3L11 16l-4 1 1-4 8.5-8.5z"/></svg>`;
+}
+
+function iconMoveSvg() {
+  return `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M13 5V2l-5 5 5 5V9c3.31 0 6 2.69 6 6 0 1.1-.3 2.13-.81 3.01A7.98 7.98 0 0 0 21 15c0-4.42-3.58-8-8-8v-2zM6 9.99A7.98 7.98 0 0 0 3 15c0 4.42 3.58 8 8 8v-2c-3.31 0-6-2.69-6-6 0-1.1.3-2.13.81-3.01L6 9.99z"/></svg>`;
 }
 
 function iconDeleteSvg() {
@@ -1008,9 +1279,19 @@ function iconDeleteSvg() {
 function treeActionButtons(id, title, isFolder) {
   const protectedFolder = isFolder && isProtectedFolder(id);
   const renameLabel = escapeAttr(t("rename"));
+  const moveLabel = escapeAttr(t("move"));
   const deleteLabel = escapeAttr(t("delete"));
   return `
     <span class="tree-actions">
+      ${!protectedFolder ? `<button
+        type="button"
+        class="icon-action"
+        data-action="move"
+        data-id="${id}"
+        data-title="${escapeAttr(title)}"
+        title="${moveLabel}"
+        aria-label="${moveLabel}"
+      >${iconMoveSvg()}</button>` : ""}
       <button
         type="button"
         class="icon-action"

@@ -1,0 +1,20 @@
+:root { font-family: system-ui, sans-serif; color: #163153; background: #f4f7fc; }
+body { margin: 0; padding: 32px 16px; }
+main { max-width: 680px; margin: auto; padding: 28px; background: white; border: 1px solid #d6e2f2; border-radius: 16px; }
+h1 { margin-top: 10px; }
+p { line-height: 1.7; }
+.badge { color: #2169d5; font-weight: 700; }
+.notice { padding: 14px; background: #fff5dd; color: #725000; border-radius: 8px; }
+.hint { color: #53657a; font-size: 13px; overflow-wrap: anywhere; }
+label { display: block; margin: 16px 0 8px; }
+input[type="password"] { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #aebfd4; border-radius: 8px; font: inherit; }
+.confirmation { line-height: 1.6; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+button { padding: 10px 14px; background: #2169d5; color: white; border: 0; border-radius: 8px; cursor: pointer; font: inherit; }
+button:disabled { background: #dbe4ef; color: #53657a; cursor: default; }
+:focus-visible { outline: 3px solid #4787de; outline-offset: 3px; }
+#status { padding: 14px; background: #edf4ff; border-radius: 8px; overflow-wrap: anywhere; }
+details { margin: 22px 0; }
+summary { cursor: pointer; }
+code { overflow-wrap: anywhere; }
+@media (max-width: 480px) { main { padding: 18px; } }
