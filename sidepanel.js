@@ -32,9 +32,13 @@ let selectedSearchIds = new Set();
 let searchEditMode = false;
 const FREE_BATCH_LIMIT = 50;
 const MEMBERSHIP_STORAGE_KEY = "yjMembershipState";
-const VIP_UPGRADE_URL = chrome.runtime.getURL("payment-test.html");
+const MEMBERSHIP_SESSION_KEY = "yjMembershipSession";
+const PAYMENT_CONFIG = globalThis.YJ_PAYMENT_CONFIG || { apiBaseUrl: "" };
 let membershipState = { batchUsed: 0, vip: false };
 let pendingBatchMove = false;
+let pendingBatchReservationId = null;
+let pendingBatchLocal = false;
+let membershipSessionToken = null;
 /** @type {Set<string>} */
 let pendingMoveIds = new Set();
 /** @type {Set<string>} */
@@ -101,6 +105,8 @@ const els = {
   membershipDialog: /** @type {HTMLDialogElement} */ (document.getElementById("membership-dialog")),
   membershipTitle: document.getElementById("membership-title"),
   membershipSummary: document.getElementById("membership-summary"),
+  membershipSignIn: /** @type {HTMLButtonElement} */ (document.getElementById("membership-sign-in")),
+  membershipSignOut: /** @type {HTMLButtonElement} */ (document.getElementById("membership-sign-out")),
   membershipUpgrade: /** @type {HTMLButtonElement} */ (document.getElementById("membership-upgrade")),
 };
 
@@ -122,15 +128,24 @@ async function init() {
 }
 
 async function loadMembershipState() {
-  const saved = await chrome.storage.local.get(MEMBERSHIP_STORAGE_KEY);
+  const saved = await chrome.storage.local.get([MEMBERSHIP_STORAGE_KEY, MEMBERSHIP_SESSION_KEY]);
+  membershipSessionToken = saved[MEMBERSHIP_SESSION_KEY] || null;
   const value = saved[MEMBERSHIP_STORAGE_KEY];
   if (value && typeof value === "object") {
     membershipState = {
       batchUsed: Number.isFinite(value.batchUsed) ? Math.max(0, value.batchUsed) : 0,
       vip: value.vip === true,
+      email: typeof value.email === "string" ? value.email : "",
     };
   }
   renderMembershipBadge();
+  if (membershipSessionToken && PAYMENT_CONFIG.apiBaseUrl) {
+    try {
+      if (await backendPermissionGranted()) await syncMembershipFromServer();
+    } catch {
+      /* Keep the cached membership label available while offline. */
+    }
+  }
 }
 
 function renderMembershipBadge() {
@@ -142,24 +157,172 @@ function openMembershipDialog() {
   els.membershipTitle.textContent = membershipState.vip ? "VIP 用户" : "普通用户";
   els.membershipSummary.textContent = membershipState.vip
     ? "您已解锁批处理不限次数。"
-    : `批处理已使用 ${membershipState.batchUsed}/${FREE_BATCH_LIMIT} 次，剩余 ${Math.max(0, FREE_BATCH_LIMIT - membershipState.batchUsed)} 次。`;
+    : `${membershipState.email ? `已登录：${membershipState.email}。` : "登录后可同步会员身份和免费次数。"}批处理已使用 ${membershipState.batchUsed}/${FREE_BATCH_LIMIT} 次，剩余 ${Math.max(0, FREE_BATCH_LIMIT - membershipState.batchUsed)} 次。`;
+  els.membershipSignIn.hidden = Boolean(membershipSessionToken);
+  els.membershipSignOut.hidden = !membershipSessionToken;
   els.membershipUpgrade.hidden = membershipState.vip;
-  els.membershipUpgrade.disabled = false;
+  els.membershipUpgrade.disabled = !membershipSessionToken;
   els.membershipUpgrade.textContent = "立即升级";
   if (typeof els.membershipDialog.showModal === "function") els.membershipDialog.showModal();
 }
 
-function ensureBatchAccess() {
-  if (membershipState.vip || membershipState.batchUsed < FREE_BATCH_LIMIT) return true;
-  openMembershipDialog();
-  return false;
+async function ensureBatchAccess() {
+  if (!PAYMENT_CONFIG.apiBaseUrl || !chrome.runtime.getManifest().oauth2?.client_id) {
+    if (membershipState.vip || membershipState.batchUsed < FREE_BATCH_LIMIT) {
+      pendingBatchLocal = true;
+      return true;
+    }
+    openMembershipDialog();
+    toast("本机 50 次免费批处理额度已用完；连接会员服务后可升级 VIP");
+    return false;
+  }
+  if (!membershipSessionToken) {
+    openMembershipDialog();
+    toast("请先使用 Google 登录，才能同步免费次数");
+    return false;
+  }
+  if (!(await backendPermissionGranted())) {
+    toast("请先授权连接会员服务");
+    return false;
+  }
+  try {
+    const reservation = await membershipApi("/membership/batch-operation", { method: "POST", body: "{}" });
+    applyRemoteMembership(reservation.user);
+    pendingBatchReservationId = reservation.reservationId;
+    pendingBatchLocal = false;
+    return true;
+  } catch (error) {
+    if (error.status === 402) {
+      await syncMembershipFromServer();
+      openMembershipDialog();
+      toast("免费批处理次数已用完，可升级 VIP 解锁不限次数");
+      return false;
+    }
+    if (error.status === 401) {
+      await signOutMembership();
+      openMembershipDialog();
+      toast("登录已过期，请重新登录");
+      return false;
+    }
+    toast("会员服务暂时不可用，请稍后重试");
+    return false;
+  }
 }
 
-async function recordBatchOperation() {
-  if (membershipState.vip) return;
-  membershipState.batchUsed += 1;
+async function recordBatchOperation(completed) {
+  const reservationId = pendingBatchReservationId;
+  pendingBatchReservationId = null;
+  if (pendingBatchLocal) {
+    pendingBatchLocal = false;
+    if (completed && !membershipState.vip) {
+      membershipState.batchUsed += 1;
+      await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
+      renderMembershipBadge();
+    }
+    return;
+  }
+  if (!reservationId || !membershipSessionToken) return;
+  try {
+    await membershipApi(`/membership/batch-operation/${encodeURIComponent(reservationId)}/${completed ? "complete" : "cancel"}`, { method: "POST", body: "{}" });
+    await syncMembershipFromServer();
+  } catch {
+    toast("批处理额度同步失败；请打开会员信息刷新状态");
+  }
+}
+
+function backendOriginPattern() {
+  try { return `${new URL(PAYMENT_CONFIG.apiBaseUrl).origin}/*`; }
+  catch { return null; }
+}
+
+async function backendPermissionGranted() {
+  const origin = backendOriginPattern();
+  return Boolean(origin && await chrome.permissions.contains({ origins: [origin] }));
+}
+
+async function requestBackendPermission() {
+  const origin = backendOriginPattern();
+  if (!origin) throw new Error("会员服务地址未配置");
+  if (await chrome.permissions.contains({ origins: [origin] })) return true;
+  return chrome.permissions.request({ origins: [origin] });
+}
+
+async function membershipApi(path, options = {}) {
+  const base = PAYMENT_CONFIG.apiBaseUrl.replace(/\/$/, "");
+  const response = await fetch(`${base}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(membershipSessionToken ? { Authorization: `Bearer ${membershipSessionToken}` } : {}),
+      ...(options.headers || {}),
+    },
+    signal: AbortSignal.timeout(20000),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(result.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return result;
+}
+
+async function applyRemoteMembership(user) {
+  if (!user || typeof user !== "object") return;
+  membershipState = {
+    batchUsed: Number.isFinite(user.batchUsed) ? Math.max(0, user.batchUsed) : 0,
+    vip: user.vip === true,
+    email: typeof user.email === "string" ? user.email : "",
+  };
   await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
   renderMembershipBadge();
+}
+
+async function syncMembershipFromServer() {
+  const result = await membershipApi("/auth/me");
+  await applyRemoteMembership(result.user);
+  return result.user;
+}
+
+async function signOutMembership() {
+  try { if (membershipSessionToken) await membershipApi("/auth/logout", { method: "POST", body: "{}" }); }
+  catch { /* Local sign-out still clears a stale or unreachable session. */ }
+  membershipSessionToken = null;
+  membershipState = { batchUsed: 0, vip: false };
+  await chrome.storage.local.remove(MEMBERSHIP_SESSION_KEY);
+  await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
+  renderMembershipBadge();
+}
+
+async function signInWithGoogle() {
+  const oauthClientId = chrome.runtime.getManifest().oauth2?.client_id;
+  if (!oauthClientId) throw new Error("尚未配置 Chrome 扩展 OAuth Client ID，请先完成 Google Cloud 扩展客户端设置");
+  if (!await requestBackendPermission()) throw new Error("未授权连接会员服务");
+  const authResult = await chrome.identity.getAuthToken({ interactive: true });
+  const accessToken = typeof authResult === "string" ? authResult : authResult?.token;
+  if (!accessToken) throw new Error("Google 未返回授权令牌，请重试");
+  const result = await membershipApi("/auth/google", {
+    method: "POST",
+    body: JSON.stringify({ accessToken }),
+  });
+  membershipSessionToken = result.sessionToken;
+  await chrome.storage.local.set({ [MEMBERSHIP_SESSION_KEY]: membershipSessionToken });
+  await applyRemoteMembership(result.user);
+}
+
+async function startVipCheckout() {
+  if (!membershipSessionToken) throw new Error("请先登录 Google 账号");
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const orderToken = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const result = await membershipApi("/checkout", {
+    method: "POST",
+    body: JSON.stringify({ id: crypto.randomUUID(), orderToken }),
+  });
+  const url = new URL(result.checkoutUrl);
+  if (url.protocol !== "https:" || !["checkout.waffo.ai", "pancake.waffo.ai"].includes(url.hostname)) {
+    throw new Error("支付地址校验失败");
+  }
+  await chrome.tabs.create({ url: url.href });
 }
 
 let refreshTimer = 0;
@@ -232,10 +395,35 @@ function bindGlobal() {
     await refresh({ silent: true });
   });
 
-  els.membershipBadge.addEventListener("click", openMembershipDialog);
-  els.membershipUpgrade.addEventListener("click", () => {
-    chrome.tabs.create({ url: VIP_UPGRADE_URL });
-    els.membershipDialog.close();
+  els.membershipBadge.addEventListener("click", async () => {
+    try { if (membershipSessionToken && await backendPermissionGranted()) await syncMembershipFromServer(); }
+    catch { /* Show the last known account state if offline. */ }
+    openMembershipDialog();
+  });
+  els.membershipSignIn.addEventListener("click", async () => {
+    els.membershipSignIn.disabled = true;
+    try {
+      await signInWithGoogle();
+      openMembershipDialog();
+      toast("Google 登录成功，会员状态已同步");
+    } catch (error) {
+      toast(`登录未完成：${error.message}`);
+    } finally { els.membershipSignIn.disabled = false; }
+  });
+  els.membershipSignOut.addEventListener("click", async () => {
+    await signOutMembership();
+    openMembershipDialog();
+    toast("已退出登录");
+  });
+  els.membershipUpgrade.addEventListener("click", async () => {
+    els.membershipUpgrade.disabled = true;
+    try {
+      await startVipCheckout();
+      els.membershipDialog.close();
+      toast("已打开 Waffo 正式收银台；付款后回到插件刷新会员状态");
+    } catch (error) {
+      toast(`无法创建购买：${error.message}`);
+    } finally { els.membershipUpgrade.disabled = false; }
   });
 
   els.btnRefresh.addEventListener("click", () => refresh());
@@ -280,6 +468,7 @@ function bindGlobal() {
 
   els.moveDialog.addEventListener("close", async () => {
     if (els.moveDialog.returnValue !== "ok" || (!pendingMoveId && !pendingMoveIds.size)) {
+      if (pendingBatchMove) await recordBatchOperation(false);
       pendingMoveId = null;
       pendingMoveIds.clear();
       pendingBatchMove = false;
@@ -292,9 +481,18 @@ function bindGlobal() {
     pendingMoveId = null;
     pendingMoveIds.clear();
     pendingBatchMove = false;
-    if (!parentId) return;
-    for (const moveId of ids) await moveBookmark(moveId, { parentId });
-    if (isBatchMove) await recordBatchOperation();
+    if (!parentId) {
+      if (isBatchMove) await recordBatchOperation(false);
+      return;
+    }
+    try {
+      for (const moveId of ids) await moveBookmark(moveId, { parentId });
+      if (isBatchMove) await recordBatchOperation(true);
+    } catch (error) {
+      if (isBatchMove) await recordBatchOperation(false);
+      toast(`移动失败：${error.message}`);
+      return;
+    }
     selectedSearchIds.clear();
     selectedTreeIds.clear();
     overviewSelectedIds.clear();
@@ -319,12 +517,12 @@ function bindGlobal() {
     if (q) renderSearch(q);
     else updateSearchBatchControls();
   });
-  els.searchBatchMove.addEventListener("click", () => {
+  els.searchBatchMove.addEventListener("click", async () => {
     if (!selectedSearchIds.size) {
       toast("请先勾选要移动的书签");
       return;
     }
-    if (!ensureBatchAccess()) return;
+    if (!await ensureBatchAccess()) return;
     pendingBatchMove = true;
     openMoveDialog([...selectedSearchIds], `${selectedSearchIds.size} 个书签`);
   });
@@ -334,10 +532,10 @@ function bindGlobal() {
       toast("请先勾选要删除的书签");
       return;
     }
-    if (!ensureBatchAccess()) return;
     if (!(await confirmAction("删除选中书签", `确定删除选中的 ${ids.length} 个书签吗？`))) return;
+    if (!await ensureBatchAccess()) return;
     await removeMany(ids);
-    await recordBatchOperation();
+    await recordBatchOperation(true);
     selectedSearchIds.clear();
     await refresh({ silent: true });
     toast(t("toastDeleted"));
@@ -350,19 +548,19 @@ function bindGlobal() {
     });
     updateTreeBatchControls();
   });
-  els.treeBatchMove.addEventListener("click", () => {
+  els.treeBatchMove.addEventListener("click", async () => {
     if (!selectedTreeIds.size) return toast("请先勾选要移动的书签");
-    if (!ensureBatchAccess()) return;
+    if (!await ensureBatchAccess()) return;
     pendingBatchMove = true;
     openMoveDialog([...selectedTreeIds], `${selectedTreeIds.size} 个书签`);
   });
   els.treeBatchDelete.addEventListener("click", async () => {
     const ids = [...selectedTreeIds];
     if (!ids.length) return toast("请先勾选要删除的书签");
-    if (!ensureBatchAccess()) return;
     if (!(await confirmAction("删除选中书签", `确定删除选中的 ${ids.length} 个书签吗？`))) return;
+    if (!await ensureBatchAccess()) return;
     await removeMany(ids);
-    await recordBatchOperation();
+    await recordBatchOperation(true);
     selectedTreeIds.clear();
     await refresh({ silent: true });
     toast(t("toastDeleted"));
@@ -485,9 +683,9 @@ function renderOverview() {
     });
   });
   els.domainList.querySelectorAll("[data-domain-batch-move]").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       if (!overviewSelectedIds.size) return toast("请先勾选书签");
-      if (!ensureBatchAccess()) return;
+      if (!await ensureBatchAccess()) return;
       pendingBatchMove = true;
       openMoveDialog([...overviewSelectedIds], `${overviewSelectedIds.size} 个书签`);
     });
@@ -496,10 +694,10 @@ function renderOverview() {
     btn.addEventListener("click", async () => {
       const ids = [...overviewSelectedIds];
       if (!ids.length) return toast("请先勾选书签");
-      if (!ensureBatchAccess()) return;
       if (!(await confirmAction("删除选中书签", `确定删除选中的 ${ids.length} 个书签吗？`))) return;
+      if (!await ensureBatchAccess()) return;
       await removeMany(ids);
-      await recordBatchOperation();
+      await recordBatchOperation(true);
       overviewSelectedIds.clear();
       await refresh({ silent: true });
       toast(t("toastDeleted"));
