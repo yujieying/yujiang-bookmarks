@@ -32,13 +32,15 @@ let selectedSearchIds = new Set();
 let searchEditMode = false;
 const FREE_BATCH_LIMIT = 50;
 const MEMBERSHIP_STORAGE_KEY = "yjMembershipState";
-const MEMBERSHIP_SESSION_KEY = "yjMembershipSession";
+const MEMBERSHIP_CONSENT_KEY = "yjMembershipIdentityConsent";
+const LEGACY_MEMBERSHIP_SESSION_KEY = "yjMembershipSession";
 const PAYMENT_CONFIG = globalThis.YJ_PAYMENT_CONFIG || { apiBaseUrl: "" };
-let membershipState = { batchUsed: 0, vip: false };
+let membershipState = { batchUsed: 0, vip: false, email: "", profileId: "" };
 let pendingBatchMove = false;
 let pendingBatchReservationId = null;
 let pendingBatchLocal = false;
-let membershipSessionToken = null;
+let membershipConsentGranted = false;
+let membershipIdentity = null;
 /** @type {Set<string>} */
 let pendingMoveIds = new Set();
 /** @type {Set<string>} */
@@ -105,8 +107,9 @@ const els = {
   membershipDialog: /** @type {HTMLDialogElement} */ (document.getElementById("membership-dialog")),
   membershipTitle: document.getElementById("membership-title"),
   membershipSummary: document.getElementById("membership-summary"),
-  membershipSignIn: /** @type {HTMLButtonElement} */ (document.getElementById("membership-sign-in")),
-  membershipSignOut: /** @type {HTMLButtonElement} */ (document.getElementById("membership-sign-out")),
+  membershipPrivacyNote: document.getElementById("membership-privacy-note"),
+  membershipEnable: /** @type {HTMLButtonElement} */ (document.getElementById("membership-enable")),
+  membershipDisable: /** @type {HTMLButtonElement} */ (document.getElementById("membership-disable")),
   membershipUpgrade: /** @type {HTMLButtonElement} */ (document.getElementById("membership-upgrade")),
 };
 
@@ -128,19 +131,26 @@ async function init() {
 }
 
 async function loadMembershipState() {
-  const saved = await chrome.storage.local.get([MEMBERSHIP_STORAGE_KEY, MEMBERSHIP_SESSION_KEY]);
-  membershipSessionToken = saved[MEMBERSHIP_SESSION_KEY] || null;
+  const saved = await chrome.storage.local.get([MEMBERSHIP_STORAGE_KEY, MEMBERSHIP_CONSENT_KEY]);
+  await chrome.storage.local.remove(LEGACY_MEMBERSHIP_SESSION_KEY);
+  membershipConsentGranted = saved[MEMBERSHIP_CONSENT_KEY] === true;
   const value = saved[MEMBERSHIP_STORAGE_KEY];
   if (value && typeof value === "object") {
     membershipState = {
       batchUsed: Number.isFinite(value.batchUsed) ? Math.max(0, value.batchUsed) : 0,
-      vip: value.vip === true,
-      email: typeof value.email === "string" ? value.email : "",
+      vip: value.vip === true && typeof value.profileId === "string" && Boolean(value.profileId),
+      email: typeof value.email === "string" && typeof value.profileId === "string" && value.profileId ? value.email : "",
+      profileId: typeof value.profileId === "string" ? value.profileId : "",
     };
   }
   renderMembershipBadge();
-  if (membershipSessionToken && PAYMENT_CONFIG.apiBaseUrl) {
+  if (membershipConsentGranted && PAYMENT_CONFIG.apiBaseUrl) {
     try {
+      membershipIdentity = await readChromeIdentity();
+      if (membershipIdentity.profileId !== membershipState.profileId) {
+        membershipState = { batchUsed: 0, vip: false, email: membershipIdentity.email, profileId: membershipIdentity.profileId };
+        await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
+      }
       if (await backendPermissionGranted()) await syncMembershipFromServer();
     } catch {
       /* Keep the cached membership label available while offline. */
@@ -156,18 +166,19 @@ function renderMembershipBadge() {
 function openMembershipDialog() {
   els.membershipTitle.textContent = membershipState.vip ? "VIP 用户" : "普通用户";
   els.membershipSummary.textContent = membershipState.vip
-    ? "您已解锁批处理不限次数。"
-    : `${membershipState.email ? `已登录：${membershipState.email}。` : "登录后可同步会员身份和免费次数。"}批处理已使用 ${membershipState.batchUsed}/${FREE_BATCH_LIMIT} 次，剩余 ${Math.max(0, FREE_BATCH_LIMIT - membershipState.batchUsed)} 次。`;
-  els.membershipSignIn.hidden = Boolean(membershipSessionToken);
-  els.membershipSignOut.hidden = !membershipSessionToken;
+    ? `会员身份：${membershipState.email || "当前 Chrome 账号"}。您已解锁批处理不限次数。`
+    : `${membershipConsentGranted ? `会员身份：${membershipState.email || "当前 Chrome 账号"}。` : "启用同步后可跨设备同步会员身份和免费次数。"}批处理已使用 ${membershipState.batchUsed}/${FREE_BATCH_LIMIT} 次，剩余 ${Math.max(0, FREE_BATCH_LIMIT - membershipState.batchUsed)} 次。`;
+  els.membershipPrivacyNote.hidden = membershipConsentGranted;
+  els.membershipEnable.hidden = membershipConsentGranted;
+  els.membershipDisable.hidden = !membershipConsentGranted;
   els.membershipUpgrade.hidden = membershipState.vip;
-  els.membershipUpgrade.disabled = !membershipSessionToken;
+  els.membershipUpgrade.disabled = !membershipConsentGranted || !PAYMENT_CONFIG.apiBaseUrl;
   els.membershipUpgrade.textContent = "立即升级";
   if (typeof els.membershipDialog.showModal === "function") els.membershipDialog.showModal();
 }
 
 async function ensureBatchAccess() {
-  if (!PAYMENT_CONFIG.apiBaseUrl || !chrome.runtime.getManifest().oauth2?.client_id) {
+  if (!PAYMENT_CONFIG.apiBaseUrl) {
     if (membershipState.vip || membershipState.batchUsed < FREE_BATCH_LIMIT) {
       pendingBatchLocal = true;
       return true;
@@ -176,12 +187,17 @@ async function ensureBatchAccess() {
     toast("本机 50 次免费批处理额度已用完；连接会员服务后可升级 VIP");
     return false;
   }
-  if (!membershipSessionToken) {
+  if (!membershipConsentGranted) {
     openMembershipDialog();
-    toast("请先使用 Google 登录，才能同步免费次数");
+    toast("请先同意启用会员同步，才能使用服务端免费额度");
     return false;
   }
+  try { membershipIdentity = membershipIdentity || await readChromeIdentity(); }
+  catch (error) { toast(error.message); return false; }
   if (!(await backendPermissionGranted())) {
+    membershipConsentGranted = false;
+    await chrome.storage.local.set({ [MEMBERSHIP_CONSENT_KEY]: false });
+    openMembershipDialog();
     toast("请先授权连接会员服务");
     return false;
   }
@@ -196,12 +212,6 @@ async function ensureBatchAccess() {
       await syncMembershipFromServer();
       openMembershipDialog();
       toast("免费批处理次数已用完，可升级 VIP 解锁不限次数");
-      return false;
-    }
-    if (error.status === 401) {
-      await signOutMembership();
-      openMembershipDialog();
-      toast("登录已过期，请重新登录");
       return false;
     }
     toast("会员服务暂时不可用，请稍后重试");
@@ -221,7 +231,7 @@ async function recordBatchOperation(completed) {
     }
     return;
   }
-  if (!reservationId || !membershipSessionToken) return;
+  if (!reservationId || !membershipIdentity) return;
   try {
     await membershipApi(`/membership/batch-operation/${encodeURIComponent(reservationId)}/${completed ? "complete" : "cancel"}`, { method: "POST", body: "{}" });
     await syncMembershipFromServer();
@@ -240,20 +250,25 @@ async function backendPermissionGranted() {
   return Boolean(origin && await chrome.permissions.contains({ origins: [origin] }));
 }
 
-async function requestBackendPermission() {
+function requestBackendPermission() {
   const origin = backendOriginPattern();
-  if (!origin) throw new Error("会员服务地址未配置");
-  if (await chrome.permissions.contains({ origins: [origin] })) return true;
+  if (!origin) return Promise.reject(new Error("会员服务地址未配置"));
   return chrome.permissions.request({ origins: [origin] });
 }
 
 async function membershipApi(path, options = {}) {
   const base = PAYMENT_CONFIG.apiBaseUrl.replace(/\/$/, "");
+  let body = options.body;
+  if (options.method === "POST" && path !== "/webhooks/waffo") {
+    membershipIdentity = membershipIdentity || await readChromeIdentity();
+    const data = typeof body === "string" ? JSON.parse(body || "{}") : (body || {});
+    body = JSON.stringify({ ...data, ...membershipIdentity });
+  }
   const response = await fetch(`${base}${path}`, {
     ...options,
+    body,
     headers: {
       "Content-Type": "application/json",
-      ...(membershipSessionToken ? { Authorization: `Bearer ${membershipSessionToken}` } : {}),
       ...(options.headers || {}),
     },
     signal: AbortSignal.timeout(20000),
@@ -273,45 +288,39 @@ async function applyRemoteMembership(user) {
     batchUsed: Number.isFinite(user.batchUsed) ? Math.max(0, user.batchUsed) : 0,
     vip: user.vip === true,
     email: typeof user.email === "string" ? user.email : "",
+    profileId: membershipIdentity?.profileId || "",
   };
   await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
   renderMembershipBadge();
 }
 
 async function syncMembershipFromServer() {
-  const result = await membershipApi("/auth/me");
+  const result = await membershipApi("/membership/status", { method: "POST", body: "{}" });
   await applyRemoteMembership(result.user);
   return result.user;
 }
 
-async function signOutMembership() {
-  try { if (membershipSessionToken) await membershipApi("/auth/logout", { method: "POST", body: "{}" }); }
-  catch { /* Local sign-out still clears a stale or unreachable session. */ }
-  membershipSessionToken = null;
-  membershipState = { batchUsed: 0, vip: false };
-  await chrome.storage.local.remove(MEMBERSHIP_SESSION_KEY);
-  await chrome.storage.local.set({ [MEMBERSHIP_STORAGE_KEY]: membershipState });
-  renderMembershipBadge();
+async function readChromeIdentity() {
+  const profile = await chrome.identity.getProfileUserInfo({ accountStatus: "ANY" });
+  const email = typeof profile.email === "string" ? profile.email.trim().toLowerCase() : "";
+  const profileId = typeof profile.id === "string" ? profile.id.trim() : "";
+  if (!email || !profileId) throw new Error("没有读取到 Chrome 主账号信息，请先在 Chrome 中登录 Google 账号后重试");
+  return { email, profileId };
 }
 
-async function signInWithGoogle() {
-  const oauthClientId = chrome.runtime.getManifest().oauth2?.client_id;
-  if (!oauthClientId) throw new Error("尚未配置 Chrome 扩展 OAuth Client ID，请先完成 Google Cloud 扩展客户端设置");
-  if (!await requestBackendPermission()) throw new Error("未授权连接会员服务");
-  const authResult = await chrome.identity.getAuthToken({ interactive: true });
-  const accessToken = typeof authResult === "string" ? authResult : authResult?.token;
-  if (!accessToken) throw new Error("Google 未返回授权令牌，请重试");
-  const result = await membershipApi("/auth/google", {
-    method: "POST",
-    body: JSON.stringify({ accessToken }),
-  });
-  membershipSessionToken = result.sessionToken;
-  await chrome.storage.local.set({ [MEMBERSHIP_SESSION_KEY]: membershipSessionToken });
-  await applyRemoteMembership(result.user);
+async function enableMembershipSync() {
+  const permissionPromise = PAYMENT_CONFIG.apiBaseUrl ? requestBackendPermission() : Promise.resolve(true);
+  membershipIdentity = await readChromeIdentity();
+  if (!await permissionPromise) throw new Error("未授权连接会员服务");
+  membershipConsentGranted = true;
+  membershipState = { batchUsed: 0, vip: false, email: membershipIdentity.email, profileId: membershipIdentity.profileId };
+  await chrome.storage.local.set({ [MEMBERSHIP_CONSENT_KEY]: true, [MEMBERSHIP_STORAGE_KEY]: membershipState });
+  if (PAYMENT_CONFIG.apiBaseUrl) await syncMembershipFromServer();
 }
 
 async function startVipCheckout() {
-  if (!membershipSessionToken) throw new Error("请先登录 Google 账号");
+  if (!membershipConsentGranted) throw new Error("请先启用会员同步");
+  membershipIdentity = membershipIdentity || await readChromeIdentity();
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   const orderToken = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
   const result = await membershipApi("/checkout", {
@@ -396,24 +405,33 @@ function bindGlobal() {
   });
 
   els.membershipBadge.addEventListener("click", async () => {
-    try { if (membershipSessionToken && await backendPermissionGranted()) await syncMembershipFromServer(); }
+    try {
+      if (membershipConsentGranted && PAYMENT_CONFIG.apiBaseUrl) {
+        membershipIdentity = await readChromeIdentity();
+        if (await backendPermissionGranted()) await syncMembershipFromServer();
+      }
+    }
     catch { /* Show the last known account state if offline. */ }
     openMembershipDialog();
   });
-  els.membershipSignIn.addEventListener("click", async () => {
-    els.membershipSignIn.disabled = true;
+  els.membershipEnable.addEventListener("click", async () => {
+    els.membershipEnable.disabled = true;
     try {
-      await signInWithGoogle();
+      await enableMembershipSync();
       openMembershipDialog();
-      toast("Google 登录成功，会员状态已同步");
+      toast("会员同步已启用");
     } catch (error) {
-      toast(`登录未完成：${error.message}`);
-    } finally { els.membershipSignIn.disabled = false; }
+      toast(`未能启用会员同步：${error.message}`);
+    } finally { els.membershipEnable.disabled = false; }
   });
-  els.membershipSignOut.addEventListener("click", async () => {
-    await signOutMembership();
+  els.membershipDisable.addEventListener("click", async () => {
+    membershipConsentGranted = false;
+    membershipIdentity = null;
+    membershipState = { ...membershipState, vip: false, email: "", profileId: "" };
+    await chrome.storage.local.set({ [MEMBERSHIP_CONSENT_KEY]: false, [MEMBERSHIP_STORAGE_KEY]: membershipState });
+    renderMembershipBadge();
     openMembershipDialog();
-    toast("已退出登录");
+    toast("会员同步已关闭；服务端会员记录不会被删除");
   });
   els.membershipUpgrade.addEventListener("click", async () => {
     els.membershipUpgrade.disabled = true;

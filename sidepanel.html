@@ -192,14 +192,15 @@
         <form method="dialog" class="dialog-body membership-dialog-body">
           <h3 id="membership-title">普通用户</h3>
           <p id="membership-summary"></p>
+          <p class="membership-privacy-note" id="membership-privacy-note" hidden>启用会员同步会读取当前 Chrome 主账号的邮箱和账号标识，并发送给会员服务，用于同步免费次数、订单归属和 VIP 状态；不会读取或上传书签。不同意可直接关闭此窗口。</p>
           <div class="membership-benefits">
             <p><strong>普通用户</strong>：批处理操作免费 50 次。</p>
             <p><strong>VIP 用户</strong>：批处理不限次数。</p>
           </div>
           <div class="dialog-actions">
             <button type="submit" value="cancel" class="btn ghost">关闭</button>
-            <button type="button" class="btn" id="membership-sign-in">使用 Google 登录</button>
-            <button type="button" class="btn ghost" id="membership-sign-out">退出登录</button>
+            <button type="button" class="btn" id="membership-enable">同意并启用会员同步</button>
+            <button type="button" class="btn ghost" id="membership-disable" hidden>关闭会员同步</button>
             <button type="button" class="btn primary" id="membership-upgrade">升级 VIP</button>
           </div>
         </form>

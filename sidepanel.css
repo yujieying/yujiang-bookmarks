@@ -1346,6 +1346,13 @@ dialog::backdrop {
   min-width: 280px;
 }
 
+.membership-privacy-note {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
 .membership-benefits {
   margin: 12px 0;
   padding: 10px 12px;
